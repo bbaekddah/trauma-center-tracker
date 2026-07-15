@@ -892,7 +892,7 @@ function profileKeyFor(user){ return user ? ('profile:'+user.uid) : 'profile'; }
 
 async function boot(){
   const user = currentAuthUser();
-  if(window.__ctAuth && !user){ renderGoogleSignIn(); return; }
+  if(window.__ctAuth && (!user || user.isAnonymous)){ renderGoogleSignIn(); return; }
   state.authUser = user;
   // 로그인한 구글 계정에 프로필을 연결해서 저장 → PC/모바일 어디서 로그인해도 같은 이름으로 이어짐
   const profile = await getJSON(profileKeyFor(user), !!user, null);
@@ -2231,10 +2231,18 @@ function openCheatForm(poolBalance, existing, ym){
 }
 
 // 구글 로그인 상태에 따라 화면을 띄운다: 로그인 안 됨 → 로그인 화면, 로그인 됨/로그아웃 등 상태 변화 시마다 재실행
+// 예전 익명 로그인 버전을 쓰던 브라우저에는 남아있는 익명 세션이 그대로 캐시되어 있을 수 있어서,
+// 그런 세션은 "로그인된 것"으로 치지 않고 정리한 뒤 구글 로그인 화면을 띄운다.
 if(window.__ctAuth){
   window.__ctAuth.onAuthStateChanged(function(user){
-    if(user) boot();
-    else renderGoogleSignIn();
+    if(user && !user.isAnonymous){
+      boot();
+    } else {
+      if(user && user.isAnonymous){
+        window.__ctAuth.signOut().catch(function(){});
+      }
+      renderGoogleSignIn();
+    }
   });
 } else if(FIREBASE_NOT_CONFIGURED){
   boot(); // Firebase 설정 전 (설정 필요 안내는 별도로 뜸)
