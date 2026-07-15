@@ -357,12 +357,11 @@ const FIREBASE_NOT_CONFIGURED = firebaseConfig.apiKey === "YOUR_API_KEY" || fire
           if(user) resolve(user);
         });
       });
-      auth.getRedirectResult().catch(function(err){
-        console.error('google redirect sign-in failed', err);
-      });
       window.__ctAuth = auth;
+      // 리다이렉트 방식은 최근 브라우저들의 크로스사이트 저장소 제한 때문에 돌아온 뒤
+      // 로그인 상태를 잃어버리는 경우가 잦아서, 페이지 이동이 없는 팝업 방식을 사용한다.
       window.__ctSignInWithGoogle = function(){
-        return auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+        return auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
       };
       window.__ctSignOut = function(){ return auth.signOut(); };
     }catch(e){
@@ -922,9 +921,9 @@ function renderGoogleSignIn(){
   if(window.__ctInitError || window.__ctAuthInitError){
     app.innerHTML = `
       <div class="overlay center">
-        <div class="sheet" style="text-align:center;">
+        <div class="sheet" style="text-align:center;max-width:320px;">
           <div style="font-size:38px;margin-bottom:8px;">⚠️</div>
-          <h3 style="margin-bottom:4px;">로그인 모듈을 불러오지 못했어요</h3>
+          <h3 style="margin:0 0 10px;">로그인 모듈을 불러오지 못했어요</h3>
           <p style="font-size:13px;color:var(--ink-muted);margin:0 0 6px;">네트워크 문제이거나 광고/추적 차단 확장 프로그램이 Firebase 스크립트를 막고 있을 수 있어요.</p>
           <p style="font-size:11px;color:var(--ink-muted);margin:0 0 18px;word-break:break-all;">${esc(window.__ctInitError || window.__ctAuthInitError || '')}</p>
           <button class="btn btn-accent btn-block" id="retry-reload-btn">새로고침</button>
@@ -936,10 +935,10 @@ function renderGoogleSignIn(){
   }
   app.innerHTML = `
     <div class="overlay center">
-      <div class="sheet" style="text-align:center;">
-        <div style="font-size:38px;margin-bottom:8px;">🏥</div>
-        <h3 style="margin-bottom:4px;">중증외상센터</h3>
-        <p style="font-size:13px;color:var(--ink-muted);margin:0 0 18px;">구글 계정으로 로그인하면 PC·모바일 어디서든 같은 프로필로 이어져요.</p>
+      <div class="sheet" style="text-align:center;max-width:320px;">
+        <div style="font-size:38px;margin-bottom:10px;">🏥</div>
+        <h3 style="margin:0 0 10px;">중증외상센터</h3>
+        <p style="font-size:13px;color:var(--ink-muted);margin:0 0 20px;line-height:1.6;">구글 계정으로 로그인하면<br>PC·모바일 어디서든 같은 프로필로 이어져요.</p>
         <button class="btn btn-accent btn-block" id="google-signin-btn">Google로 로그인</button>
         <div id="google-signin-warning" style="margin-top:10px;"></div>
       </div>
@@ -957,12 +956,19 @@ function renderGoogleSignIn(){
       warnBox.innerHTML = '<div class="warn-box">Firebase 인증 모듈을 불러오지 못했어요. 새로고침 후 다시 시도해주세요.</div>';
       return;
     }
-    btn.disabled = true; btn.textContent = '이동 중…';
+    btn.disabled = true; btn.textContent = '로그인 창 여는 중…';
     try{
-      await window.__ctAuth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+      await window.__ctAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      // 성공하면 onAuthStateChanged가 알아서 다음 화면으로 넘겨줌
     }catch(e){
       console.error('google sign-in failed', e);
-      warnBox.innerHTML = '<div class="warn-box">로그인에 실패했어요: ' + esc((e && e.message) || String(e)) + '</div>';
+      if(e && e.code === 'auth/popup-closed-by-user'){
+        warnBox.innerHTML = ''; // 사용자가 그냥 창을 닫은 것 — 에러로 취급하지 않음
+      } else if(e && e.code === 'auth/popup-blocked'){
+        warnBox.innerHTML = '<div class="warn-box">브라우저가 팝업을 막았어요. 팝업 차단을 해제하고 다시 눌러주세요.</div>';
+      } else {
+        warnBox.innerHTML = '<div class="warn-box">로그인에 실패했어요: ' + esc((e && e.message) || String(e)) + '</div>';
+      }
       btn.disabled = false; btn.textContent = 'Google로 로그인';
     }
   };
