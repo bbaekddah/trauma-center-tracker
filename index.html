@@ -155,6 +155,7 @@
   .day-icon{position:relative; width:15px; height:15px; border-radius:50%; border:1.4px solid var(--line); background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:9px; line-height:1;}
   .day-icon .type-dot{position:absolute; bottom:-2px; right:-2px; width:6px; height:6px; border-radius:50%; border:1.4px solid var(--surface);}
   .day-icon.more{background:var(--surface-alt); border-color:var(--line); color:var(--ink-muted); font-size:8.5px; font-weight:700;}
+  .vacation-note{text-align:center; padding:11px 14px; border-radius:var(--radius); background:var(--gold-soft); color:#8a6a1c; font-size:13px; font-weight:700;}
   .legend{display:flex; flex-wrap:wrap; gap:8px 14px; padding:14px 18px 4px; font-size:12px; color:var(--ink-muted);}
   .legend-item{display:flex; align-items:center; gap:5px;}
   .legend-icon{width:18px; height:18px; border-radius:50%; border:1.4px solid; display:flex; align-items:center; justify-content:center; font-size:10px; background:var(--surface);}
@@ -1541,6 +1542,17 @@ async function renderCalendar(){
   `).join('');
 
   const onVacation = isVacationMonth(ym);
+  const isAdminUser = isAdmin(state.me);
+  const isPastMonth = monthStatus(y, m).past;
+
+  // 방학 설정 버튼은 관리자에게만 보이고, 이미 지나간 달에는 노출하지 않는다.
+  // 이미 방학으로 설정된 달은 버튼 대신 안내 문구만 보여준다 (관리자는 눌러서 해제 가능).
+  let vacationControlHtml = '';
+  if(onVacation){
+    vacationControlHtml = `<div class="vacation-note" id="vacation-note" style="${isAdminUser ? 'cursor:pointer;' : ''}">🏖️ 이달은 방학이에요, 모두 해삐타임!</div>`;
+  } else if(isAdminUser && !isPastMonth){
+    vacationControlHtml = `<button class="btn btn-block btn-ghost" id="toggle-vacation">🏖️ 이 달을 방학으로 설정</button>`;
+  }
 
   app.innerHTML = shell(`
     <div class="month-nav">
@@ -1548,9 +1560,7 @@ async function renderCalendar(){
       <div class="m-title">${y}년 ${m+1}월 ${onVacation ? '🏖️' : ''}</div>
       <button id="cal-next">›</button>
     </div>
-    <div style="padding:0 18px 12px;">
-      <button class="btn btn-block ${onVacation ? '' : 'btn-ghost'}" id="toggle-vacation" style="${onVacation ? 'background:var(--gold);color:#fff;' : ''}">${onVacation ? '🏖️ 방학 해제하기' : '🏖️ 이 달을 방학으로 설정'}</button>
-    </div>
+    ${vacationControlHtml ? `<div style="padding:0 18px 12px;">${vacationControlHtml}</div>` : ''}
     <div class="cal-grid">
       ${['일','월','화','수','목','금','토'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
       ${cells}
@@ -1561,13 +1571,24 @@ async function renderCalendar(){
   bindShell();
   document.getElementById('cal-prev').onclick = ()=>{ state.calMonth = new Date(y, m-1, 1); render(); };
   document.getElementById('cal-next').onclick = ()=>{ state.calMonth = new Date(y, m+1, 1); render(); };
-  document.getElementById('toggle-vacation').onclick = async ()=>{
-    const msg = onVacation ? `${y}년 ${m+1}월 방학 설정을 해제할까요?` : `${y}년 ${m+1}월을 방학으로 설정할까요? 이 달은 운동/식단 벌금이 매겨지지 않아요.`;
-    const ok = await confirmDialog(msg, onVacation ? '해제' : '설정');
-    if(!ok) return;
-    await toggleVacationMonth(ym);
-    render();
-  };
+  const toggleBtn = document.getElementById('toggle-vacation');
+  if(toggleBtn){
+    toggleBtn.onclick = async ()=>{
+      const ok = await confirmDialog(`${y}년 ${m+1}월을 방학으로 설정할까요? 이 달은 운동/식단 벌금이 매겨지지 않아요.`, '설정');
+      if(!ok) return;
+      await toggleVacationMonth(ym);
+      render();
+    };
+  }
+  const vacationNote = document.getElementById('vacation-note');
+  if(vacationNote && isAdminUser){
+    vacationNote.onclick = async ()=>{
+      const ok = await confirmDialog(`${y}년 ${m+1}월 방학 설정을 해제할까요?`, '해제');
+      if(!ok) return;
+      await toggleVacationMonth(ym);
+      render();
+    };
+  }
   document.querySelectorAll('.cal-cell[data-date]').forEach(cell=>{
     cell.onclick = ()=> showDayDetail(cell.dataset.date, byDay[Number(cell.dataset.date.split('-')[2])] || []);
   });
