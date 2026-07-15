@@ -948,19 +948,21 @@ function renderGoogleSignIn(){
   btn.onclick = async ()=>{
     const warnBox = document.getElementById('google-signin-warning');
     warnBox.innerHTML = '';
-    if(!window.__ctSignInWithGoogle){
-      warnBox.innerHTML = '<div class="warn-box">Firebase 설정이 완료되지 않았어요.</div>';
-      return;
-    }
     if(location.protocol === 'file:'){
       warnBox.innerHTML = '<div class="warn-box">구글 로그인은 파일을 직접 열어서는 동작하지 않아요. https 주소(예: GitHub Pages)로 접속해주세요.</div>';
       return;
     }
+    // window.__ctAuth / firebase.auth.GoogleAuthProvider 를 직접 사용 (중간 래퍼 함수에 의존하지 않음)
+    if(!window.__ctAuth || typeof firebase === 'undefined' || !firebase.auth || !firebase.auth.GoogleAuthProvider){
+      warnBox.innerHTML = '<div class="warn-box">Firebase 인증 모듈을 불러오지 못했어요. 새로고침 후 다시 시도해주세요.</div>';
+      return;
+    }
     btn.disabled = true; btn.textContent = '이동 중…';
-    try{ await window.__ctSignInWithGoogle(); }
-    catch(e){
+    try{
+      await window.__ctAuth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+    }catch(e){
       console.error('google sign-in failed', e);
-      warnBox.innerHTML = '<div class="warn-box">로그인에 실패했어요. 잠시 후 다시 시도해주세요.</div>';
+      warnBox.innerHTML = '<div class="warn-box">로그인에 실패했어요: ' + esc((e && e.message) || String(e)) + '</div>';
       btn.disabled = false; btn.textContent = 'Google로 로그인';
     }
   };
@@ -1173,7 +1175,7 @@ function renderNameEdit(){
     const ok = await confirmDialog('로그아웃할까요? 다른 구글 계정으로 다시 로그인할 수 있어요.', '로그아웃');
     if(!ok) return;
     overlay.remove();
-    if(window.__ctSignOut) await window.__ctSignOut();
+    if(window.__ctAuth) await window.__ctAuth.signOut();
     // onAuthStateChanged가 자동으로 로그인 화면을 띄워줌
   };
   let selIcon = state.myIcon;
