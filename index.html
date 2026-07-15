@@ -36,6 +36,7 @@
     max-width:520px;
     margin:0 auto;
     min-height:100vh;
+    min-height:100dvh; /* 모바일 사파리 등에서 주소창 표시/숨김에 따라 실제 보이는 높이에 맞춤 */
     background:var(--surface);
     display:flex;
     flex-direction:column;
@@ -69,6 +70,12 @@
   .ekg{width:100%; height:20px; margin-top:12px; display:block;}
   .ekg path{fill:none; stroke:var(--accent); stroke-width:1.6; opacity:0.55;}
 
+  /* bottom-actions와 tabbar를 하나의 dock으로 묶어서 화면 하단에 함께 고정.
+     (모바일 사파리에서 주소창이 늘었다 줄었다 하면서 각각 따로 sticky를 걸면
+     체크인 버튼이 탭바 아래로 밀려 숨는 경우가 있어, 통째로 하나의 sticky 컨테이너로 처리) */
+  .bottom-dock{
+    position:sticky; bottom:0; z-index:20;
+  }
   .bottom-actions{
     display:flex; gap:10px; padding:10px 18px;
     background:var(--surface); border-top:1px solid var(--line);
@@ -79,7 +86,6 @@
   .tabbar{
     display:flex; border-top:1px solid var(--line);
     background:var(--surface);
-    position:sticky; bottom:0; z-index:20;
     box-shadow:0 -2px 10px rgba(0,0,0,0.03);
   }
   .tabbar button{
@@ -459,17 +465,17 @@ const FIREBASE_NOT_CONFIGURED = firebaseConfig.apiKey === "YOUR_API_KEY" || fire
 
 const MEMBER_COLORS = ['#0E8C74','#C9962C','#5B6EE1','#D9576E','#3AA6B9','#8C5FC9','#E08A3C','#3D8B4C'];
 const EMOJI_CHOICES = ['💪','🔥','🥗','🏃','🧘','🚴','🏊','🥊','🍎','😎','🐯','🐻','🐶','🐱','🦁','🐼','🐹','🐰','🦊','⛹️'];
-const REAL_NAMES = ['김선미','최은영','백다혜','서윤정','윤수희','양혜인'];
 function givenName(realName){ return (realName && realName.length>1) ? realName.slice(1) : (realName||''); }
-const DEFAULT_ADMIN = '백다혜';
-function isAdmin(realName){ return realName === state.adminName; }
+const ADMIN_BOOTSTRAP_EMAIL = 'bbaekdda@saramin.co.kr'; // 이 이메일로 로그인한 계정에게 최초 1회 관리자 권한을 자동 부여
+function isAdmin(){
+  // 이름이 아니라 로그인한 구글 계정의 이메일 기준으로 관리자 여부를 판정한다.
+  return !!(state.authUser && state.adminEmail && state.authUser.email === state.adminEmail);
+}
 function displayName(realName){
   const m = state.members.find(x=>x.name===realName);
   const given = givenName(realName);
-  const base = (m && m.nickname) ? `${m.nickname}(${given})` : (given || realName || '?');
-  // 관리자 왕관은 다른 사람에게는 안 보이고, 관리자 본인이 자기 이름을 볼 때만 표시
-  const showCrown = isAdmin(realName) && realName === state.me;
-  return showCrown ? `${base} 👑` : base;
+  // 왕관(관리자 표시)은 여기서는 붙이지 않는다 — 상단 프로필 뱃지에서만 별도로 표시한다.
+  return (m && m.nickname) ? `${m.nickname}(${given})` : (given || realName || '?');
 }
 function memberIndex(name){ return state.members.findIndex(m=>m.name===name); }
 function colorFor(name){
@@ -569,7 +575,9 @@ function mondayWeeksFor(y, m){
 const state = {
   me: null,
   members: [],
-  adminName: DEFAULT_ADMIN,
+  authUser: null,
+  adminName: '',
+  adminEmail: null,
   tab: 'feed',
   feedMonth: new Date(),
   calMonth: new Date(),
@@ -591,11 +599,25 @@ async function saveMembers(){ return await setJSON('members', {list: state.membe
 
 async function loadAdminConfig(){
   const data = await getJSON('admin-config', true, null);
-  state.adminName = (data && data.admin) || DEFAULT_ADMIN;
+  if(data && data.adminEmail){
+    state.adminEmail = data.adminEmail;
+    state.adminName = data.adminName || '';
+    return;
+  }
+  // 아직 관리자가 지정된 적이 없고, 지금 로그인한 사람이 최초 관리자 이메일과 일치하면 스스로를 관리자로 등록
+  const user = state.authUser;
+  if(user && user.email === ADMIN_BOOTSTRAP_EMAIL){
+    state.adminEmail = user.email;
+    state.adminName = user.displayName || '';
+    await setJSON('admin-config', {adminEmail: state.adminEmail, adminName: state.adminName}, true);
+  } else {
+    state.adminEmail = null;
+    state.adminName = '';
+  }
 }
-async function transferAdmin(newAdminName){
-  const result = await setJSON('admin-config', {admin: newAdminName}, true);
-  if(result) state.adminName = newAdminName;
+async function transferAdmin(newAdminMember){
+  const result = await setJSON('admin-config', {adminEmail: newAdminMember.email || '', adminName: newAdminMember.name}, true);
+  if(result){ state.adminEmail = newAdminMember.email || ''; state.adminName = newAdminMember.name; }
   return result;
 }
 
@@ -904,11 +926,12 @@ async function boot(){
     state.myNickname = profile.nickname || '';
     const existing = state.members.find(m=>m.name===state.me);
     if(!existing){
-      state.members.push({name: state.me, nickname: state.myNickname, icon: state.myIcon, joinedAt: dateStr(new Date())});
+      state.members.push({name: state.me, nickname: state.myNickname, icon: state.myIcon, email: (user && user.email) || '', joinedAt: dateStr(new Date())});
       await saveMembers();
-    } else if(existing.icon !== state.myIcon || existing.nickname !== state.myNickname){
+    } else if(existing.icon !== state.myIcon || existing.nickname !== state.myNickname || (user && existing.email !== user.email)){
       existing.icon = state.myIcon;
       existing.nickname = state.myNickname;
+      if(user && user.email) existing.email = user.email; // 예전 데이터 보강
       await saveMembers();
     }
     render();
@@ -975,17 +998,16 @@ function renderGoogleSignIn(){
 }
 
 function renderNamePrompt(){
+  const authUser = currentAuthUser();
+  const googleName = (authUser && (authUser.displayName || authUser.email)) || '';
   app.innerHTML = `
     <div class="overlay center">
       <div class="sheet">
         <h3>🚑 중증외상센터 환자 등록</h3>
         <p style="font-size:13px;color:var(--ink-muted);margin-top:-6px;">화면에는 "별칭(이름)"으로 표시돼요. 예: 혜혜(다혜)</p>
         <div class="field">
-          <label>이름</label>
-          <select id="realname-input">
-            <option value="" disabled selected>선택해주세요</option>
-            ${REAL_NAMES.map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select>
+          <label>이름 (구글 계정)</label>
+          <div style="padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:var(--bg);font-size:14px;font-weight:700;">${esc(googleName || '이름을 가져오지 못했어요')}</div>
         </div>
         <div class="field">
           <label>별칭</label>
@@ -1022,19 +1044,19 @@ function renderNamePrompt(){
     if(e.target.value.trim()){ selectedIcon = e.target.value.trim(); document.querySelectorAll('#emoji-grid button').forEach(x=>x.classList.remove('on')); }
   };
   document.getElementById('name-submit').onclick = async ()=>{
-    const realName = document.getElementById('realname-input').value;
+    const authUser = currentAuthUser();
+    const realName = (authUser && (authUser.displayName || authUser.email)) || '';
     const nickname = document.getElementById('nickname-input').value.trim();
     const customVal = document.getElementById('icon-custom').value.trim();
     const warnBox = document.getElementById('reg-warning');
     warnBox.innerHTML = '';
-    if(!realName){ warnBox.innerHTML = '<div class="warn-box">이름을 선택해주세요.</div>'; return; }
+    if(!realName){ warnBox.innerHTML = '<div class="warn-box">구글 계정 이름을 가져오지 못했어요. 다시 로그인해주세요.</div>'; return; }
     if(!nickname){ warnBox.innerHTML = '<div class="warn-box">별칭을 입력해주세요.</div>'; return; }
     const icon = customVal || selectedIcon;
     const bank = document.getElementById('bank-input').value.trim();
     const account = document.getElementById('account-input').value.trim();
     const submitBtn = document.getElementById('name-submit');
     submitBtn.disabled = true; submitBtn.textContent = '등록 중…';
-    const authUser = currentAuthUser();
     const profileResult = await setJSON(profileKeyFor(authUser), {name:realName, nickname, icon}, !!authUser);
     if(!profileResult){
       warnBox.innerHTML = '<div class="warn-box">저장에 실패했어요 (서버 오류). 잠시 후 다시 시도해주세요.</div>';
@@ -1042,9 +1064,10 @@ function renderNamePrompt(){
       return;
     }
     state.me = realName; state.myIcon = icon; state.myNickname = nickname;
+    const email = (authUser && authUser.email) || '';
     const existing = state.members.find(m=>m.name===realName);
-    if(!existing){ state.members.push({name:realName, nickname, icon, bank, account, joinedAt: dateStr(new Date())}); }
-    else { existing.nickname = nickname; existing.icon = icon; existing.bank = bank; existing.account = account; }
+    if(!existing){ state.members.push({name:realName, nickname, icon, email, bank, account, joinedAt: dateStr(new Date())}); }
+    else { existing.nickname = nickname; existing.icon = icon; existing.bank = bank; existing.account = account; if(email) existing.email = email; }
     const membersResult = await saveMembers();
     if(!membersResult){
       warnBox.innerHTML = '<div class="warn-box">내 정보는 저장했지만, 멤버 목록 동기화에는 실패했어요. 다시 시도해주세요.</div>';
@@ -1068,17 +1091,19 @@ function shell(innerHTML, bottomBar){
       </div>
       <div class="me-badge" id="me-badge">
         <span class="badge-icon">${state.myIcon || '💪'}</span>
-        ${esc(displayName(state.me))}
+        ${esc(displayName(state.me))}${isAdmin() ? ' 👑' : ''}
       </div>
     </div>
     <svg class="ekg" viewBox="0 0 400 20" preserveAspectRatio="none"><path d="M0,10 L140,10 L150,2 L160,18 L170,10 L400,10"/></svg>
   </div>
   <div class="content">${innerHTML}</div>
-  ${bottomBar ? `<div class="bottom-actions">${bottomBar}</div>` : ''}
-  <div class="tabbar">
-    <button data-tab="feed" class="${state.tab==='feed'?'active':''}"><span class="ic">💬</span>체크인</button>
-    <button data-tab="cal" class="${state.tab==='cal'?'active':''}"><span class="ic">📅</span>캘린더</button>
-    <button data-tab="dash" class="${state.tab==='dash'?'active':''}"><span class="ic">📊</span>정산</button>
+  <div class="bottom-dock">
+    ${bottomBar ? `<div class="bottom-actions">${bottomBar}</div>` : ''}
+    <div class="tabbar">
+      <button data-tab="feed" class="${state.tab==='feed'?'active':''}"><span class="ic">💬</span>체크인</button>
+      <button data-tab="cal" class="${state.tab==='cal'?'active':''}"><span class="ic">📅</span>캘린더</button>
+      <button data-tab="dash" class="${state.tab==='dash'?'active':''}"><span class="ic">📊</span>정산</button>
+    </div>
   </div>
   `;
 }
@@ -1139,10 +1164,8 @@ function renderNameEdit(){
     <div class="sheet">
       <h3>프로필 변경</h3>
       <div class="field">
-        <label>이름</label>
-        <select id="edit-realname">
-          ${REAL_NAMES.map(n=>`<option value="${n}" ${n===state.me?'selected':''}>${n}</option>`).join('')}
-        </select>
+        <label>이름 (구글 계정)</label>
+        <div style="padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:var(--bg);font-size:14px;font-weight:700;">${esc(state.me||'')}</div>
       </div>
       <div class="field"><label>별칭</label><input type="text" id="edit-nickname" value="${esc(state.myNickname||'')}" maxlength="10" placeholder="예: 혜혜"></div>
       <div class="field">
@@ -1198,7 +1221,8 @@ function renderNameEdit(){
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
   overlay.querySelector('#edit-cancel').onclick = ()=>overlay.remove();
   overlay.querySelector('#edit-save').onclick = async ()=>{
-    const realName = overlay.querySelector('#edit-realname').value;
+    const authUser = currentAuthUser();
+    const realName = state.me; // 이름은 구글 계정 기준이라 여기서 바꿀 수 없음
     const nickname = overlay.querySelector('#edit-nickname').value.trim();
     const customVal = overlay.querySelector('#edit-icon-custom').value.trim();
     const warnBox = overlay.querySelector('#edit-warning');
@@ -1210,7 +1234,6 @@ function renderNameEdit(){
     const oldName = state.me;
     const saveBtn = overlay.querySelector('#edit-save');
     saveBtn.disabled = true; saveBtn.textContent = '저장 중…';
-    const authUser = currentAuthUser();
     const profileResult = await setJSON(profileKeyFor(authUser), {name:realName, nickname, icon}, !!authUser);
     if(!profileResult){
       warnBox.innerHTML = '<div class="warn-box">저장에 실패했어요 (서버 오류). 잠시 후 다시 시도해주세요.</div>';
@@ -1218,9 +1241,10 @@ function renderNameEdit(){
       return;
     }
     state.me = realName; state.myIcon = icon; state.myNickname = nickname;
+    const email = (authUser && authUser.email) || '';
     const existing = state.members.find(m=>m.name===oldName);
-    if(existing){ existing.name = realName; existing.nickname = nickname; existing.icon = icon; existing.bank = bank; existing.account = account; }
-    else { state.members.push({name:realName, nickname, icon, bank, account, joinedAt: dateStr(new Date())}); }
+    if(existing){ existing.name = realName; existing.nickname = nickname; existing.icon = icon; existing.bank = bank; existing.account = account; if(email) existing.email = email; }
+    else { state.members.push({name:realName, nickname, icon, email, bank, account, joinedAt: dateStr(new Date())}); }
     const membersResult = await saveMembers();
     if(!membersResult){
       warnBox.innerHTML = '<div class="warn-box">내 정보는 저장했지만, 멤버 목록 동기화에는 실패했어요. 다시 시도해주세요.</div>';
@@ -1260,11 +1284,16 @@ function openAdminTransfer(){
   const confirmBtn = overlay.querySelector('#admin-transfer-confirm');
   if(confirmBtn) confirmBtn.onclick = async ()=>{
     const newAdminName = overlay.querySelector('#new-admin-select').value;
+    const targetMember = others.find(m=>m.name===newAdminName);
     const warnBox = overlay.querySelector('#admin-transfer-warning');
+    if(!targetMember || !targetMember.email){
+      warnBox.innerHTML = '<div class="warn-box">이 멤버는 구글 계정 정보가 아직 없어요. 상대방이 한 번 로그인한 뒤 다시 시도해주세요.</div>';
+      return;
+    }
     const ok = await confirmDialog(`${newAdminName}님에게 관리자 권한을 넘길까요? 이후 본인은 관리자 권한을 잃어요.`, '넘기기');
     if(!ok) return;
     confirmBtn.disabled = true; confirmBtn.textContent = '변경 중…';
-    const result = await transferAdmin(newAdminName);
+    const result = await transferAdmin(targetMember);
     if(!result){
       warnBox.innerHTML = '<div class="warn-box">저장에 실패했어요 (서버 오류). 잠시 후 다시 시도해주세요.</div>';
       confirmBtn.disabled = false; confirmBtn.textContent = '권한 넘기기';
