@@ -342,22 +342,34 @@ const FIREBASE_NOT_CONFIGURED = firebaseConfig.apiKey === "YOUR_API_KEY" || fire
   let auth = null;
   let authReady = null; // Google 계정으로 로그인이 완료되어야 규칙(auth != null)을 통과해서 읽기/쓰기가 가능해짐
   if(!FIREBASE_NOT_CONFIGURED && window.firebase){
-    firebase.initializeApp(firebaseConfig);
-    db = firebase.database();
-    auth = firebase.auth();
-    authReady = new Promise((resolve)=>{
-      auth.onAuthStateChanged(user=>{
-        if(user) resolve(user);
+    try{
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.database();
+    }catch(e){
+      console.error('firebase app/database 초기화 실패', e);
+      window.__ctInitError = (e && e.message) || String(e);
+    }
+    try{
+      if(typeof firebase.auth !== 'function') throw new Error('firebase.auth 를 찾을 수 없음 (firebase-auth-compat.js 로드 실패 가능성)');
+      auth = firebase.auth();
+      authReady = new Promise((resolve)=>{
+        auth.onAuthStateChanged(user=>{
+          if(user) resolve(user);
+        });
       });
-    });
-    auth.getRedirectResult().catch(function(err){
-      console.error('google redirect sign-in failed', err);
-    });
-    window.__ctAuth = auth;
-    window.__ctSignInWithGoogle = function(){
-      return auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
-    };
-    window.__ctSignOut = function(){ return auth.signOut(); };
+      auth.getRedirectResult().catch(function(err){
+        console.error('google redirect sign-in failed', err);
+      });
+      window.__ctAuth = auth;
+      window.__ctSignInWithGoogle = function(){
+        return auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+      };
+      window.__ctSignOut = function(){ return auth.signOut(); };
+    }catch(e){
+      // 조용히 예전(로그인 없는) 방식으로 넘어가지 않고, 원인을 화면에 그대로 보여준다.
+      console.error('firebase auth 초기화 실패', e);
+      window.__ctAuthInitError = (e && e.message) || String(e);
+    }
   }
   async function ready(){ if(authReady) await authReady; }
 
@@ -907,6 +919,21 @@ async function boot(){
 }
 
 function renderGoogleSignIn(){
+  if(window.__ctInitError || window.__ctAuthInitError){
+    app.innerHTML = `
+      <div class="overlay center">
+        <div class="sheet" style="text-align:center;">
+          <div style="font-size:38px;margin-bottom:8px;">⚠️</div>
+          <h3 style="margin-bottom:4px;">로그인 모듈을 불러오지 못했어요</h3>
+          <p style="font-size:13px;color:var(--ink-muted);margin:0 0 6px;">네트워크 문제이거나 광고/추적 차단 확장 프로그램이 Firebase 스크립트를 막고 있을 수 있어요.</p>
+          <p style="font-size:11px;color:var(--ink-muted);margin:0 0 18px;word-break:break-all;">${esc(window.__ctInitError || window.__ctAuthInitError || '')}</p>
+          <button class="btn btn-accent btn-block" id="retry-reload-btn">새로고침</button>
+        </div>
+      </div>`;
+    const retryBtn = document.getElementById('retry-reload-btn');
+    if(retryBtn) retryBtn.onclick = ()=> location.reload();
+    return;
+  }
   app.innerHTML = `
     <div class="overlay center">
       <div class="sheet" style="text-align:center;">
@@ -2207,8 +2234,11 @@ if(window.__ctAuth){
     if(user) boot();
     else renderGoogleSignIn();
   });
-} else {
+} else if(FIREBASE_NOT_CONFIGURED){
   boot(); // Firebase 설정 전 (설정 필요 안내는 별도로 뜸)
+} else {
+  // Firebase는 설정됐는데 auth 모듈 초기화에 실패한 경우: 예전(로그인 없는) 방식으로 조용히 넘어가지 않고 에러 화면을 보여준다.
+  renderGoogleSignIn();
 }
 </script>
 </body>
