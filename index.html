@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -227,12 +226,6 @@
   .diet-row-top span:first-child{flex:1; color:var(--ink-muted); font-weight:600;}
   .diet-bar{height:7px; background:var(--line); border-radius:99px; overflow:hidden;}
   .diet-bar .fill{height:100%; background:var(--gold); border-radius:99px;}
-  .box-row{display:flex; flex-wrap:wrap; gap:5px;}
-  .check-box{width:22px; height:22px; border-radius:6px; border:1.5px solid var(--line); background:var(--surface); flex-shrink:0;}
-  .check-box.filled{border-color:transparent;}
-  .check-box.filled.workout{background:var(--accent);}
-  .check-box.filled.diet{background:var(--gold);}
-  .box-extra{display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:var(--ink-muted); background:var(--surface-alt); border-radius:6px; width:22px; height:22px; flex-shrink:0;}
 
   /* ---- Modals ---- */
   .overlay{
@@ -1747,16 +1740,6 @@ function renderSettlementHtml(cd, settlement){
 }
 
 // ---------- DASHBOARD TAB ----------
-// 0/8, 0/12 같은 월 누적 체크인 현황을 박스 한 줄로 표시.
-// 기록한 횟수(count)만큼 앞에서부터 박스를 채우고, 기준(total)을 넘긴 초과분은 "+N" 뱃지로 따로 표시한다.
-function renderCheckBoxes(count, total, type){
-  const filled = Math.min(count, total);
-  const boxes = Array.from({length: total}, (_, i)=> `<div class="check-box ${i<filled ? 'filled '+type : ''}"></div>`).join('');
-  const extra = count>total ? `<div class="box-extra">+${count-total}</div>` : '';
-  return `<div class="box-row">${boxes}${extra}</div>`;
-}
-
-
 async function renderDashboard(){
   const y = state.dashMonth.getFullYear(), m = state.dashMonth.getMonth();
   const ym = y+'-'+pad2(m+1);
@@ -1848,19 +1831,21 @@ async function renderDashboard(){
     </div>` : '';
 
   const memberCards = memberStatsList.filter(({mem})=>mem.name===state.me).map(({mem, stats})=>{
+    const workoutPct = Math.min(100, stats.minWorkout>0 ? Math.round(stats.workoutCount/stats.minWorkout*100) : 100);
     const workoutRight = stats.monthClosed
       ? (stats.workoutFine===0 ? `<span class="week-fine zero">-</span>` : `<span class="week-fine">₩${stats.workoutFine.toLocaleString()}</span>`)
       : `<span class="week-fine pending">진행중</span>`;
     const workoutHtml = `<div class="diet-row">
         <div class="diet-row-top"><span>💪 운동 (월 누적, 주차 구분 없음)</span><span class="mono">${stats.workoutCount}/${stats.minWorkout}</span>${workoutRight}</div>
-        ${renderCheckBoxes(stats.workoutCount, stats.minWorkout, 'workout')}
+        <div class="diet-bar"><div class="fill" style="background:var(--accent); width:${workoutPct}%"></div></div>
       </div>`;
+    const dietPct = Math.min(100, stats.dietMin>0 ? Math.round(stats.dietCount/stats.dietMin*100) : 100);
     const dietRight = stats.monthClosed
       ? (stats.dietFine===0 ? `<span class="week-fine zero">-</span>` : `<span class="week-fine">₩${stats.dietFine.toLocaleString()}</span>`)
       : `<span class="week-fine pending">진행중</span>`;
     const dietHtml = `<div class="diet-row">
         <div class="diet-row-top"><span>🍱 식단 (월 누적, 주차 구분 없음)</span><span class="mono">${stats.dietCount}/${stats.dietMin}</span>${dietRight}</div>
-        ${renderCheckBoxes(stats.dietCount, stats.dietMin, 'diet')}
+        <div class="diet-bar"><div class="fill" style="width:${dietPct}%"></div></div>
       </div>`;
     return `<div class="member-card">
       <div class="member-head">
