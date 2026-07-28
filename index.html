@@ -317,9 +317,9 @@
   .photo-full img{max-width:92%; max-height:80vh; border-radius:10px;}
   .loading{display:flex; align-items:center; justify-content:center; height:60vh; color:var(--ink-muted); font-size:13px;}
 </style>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js" onerror="window.__ctFirebaseScriptError=true"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js" onerror="window.__ctFirebaseScriptError=true"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js" onerror="window.__ctFirebaseScriptError=true"></script>
 </head>
 <body>
 <div id="app"><div class="loading">불러오는 중…</div></div>
@@ -375,6 +375,12 @@ const FIREBASE_NOT_CONFIGURED = firebaseConfig.apiKey === "YOUR_API_KEY" || fire
       console.error('firebase auth 초기화 실패', e);
       window.__ctAuthInitError = (e && e.message) || String(e);
     }
+  } else if(!FIREBASE_NOT_CONFIGURED && !window.firebase){
+    // firebase 전역 자체가 없다는 건 위 3개 <script src> 태그가 아예 실행되지 못했다는 뜻
+    // (광고/추적 차단 확장 프로그램, 회사 네트워크/방화벽, 또는 단순 네트워크 문제로 gstatic.com이 막힌 경우가 대부분).
+    // 이 경우를 여기서 바로 잡아두지 않으면, 로그인 버튼까지는 정상적으로 뜨고 눌러야만 실패해서 원인 파악이 늦어진다.
+    console.error('firebase SDK 스크립트가 로드되지 않음 (window.firebase undefined)');
+    window.__ctInitError = 'Firebase SDK 스크립트를 불러오지 못했어요' + (window.__ctFirebaseScriptError ? ' (스크립트 로드 실패 감지됨)' : ' (원인 불명 — 네트워크이거나 차단 확장 프로그램일 가능성이 높음)') + '.';
   }
   async function ready(){ if(authReady) await authReady; }
 
@@ -529,47 +535,8 @@ function pad2(n){ return n<10 ? '0'+n : ''+n; }
 function ymKey(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1); }
 function dateStr(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
 function daysInMonth(y,m){ return new Date(y, m+1, 0).getDate(); }
-// 실제 월~일 기준 주차: 이 달의 첫 번째 월요일부터 시작하는 주만 카운트한다.
-// (그 달 1일이 월요일이 아니면, 첫 월요일 전날들은 "그 어떤 주에도 속하지 않음" — 이전 달의 마지막 주로 넘김)
-// 마지막 주는 일요일이 다음 달로 넘어갈 수 있으며, end 값이 그 달의 총 일수를 넘을 수 있다(다음 달 며칠로 취급).
-// 실제 월~일 기준 주차. 월 경계에 걸친 주는 "그 주 7일 중 며칠이 이 달에 속하는지"로 다수결 판정한다.
-// - 이 달 1일의 요일이 월~목이면: 그 주의 과반(4일 이상)이 이 달에 속하므로 1일부터 시작하는 (짧을 수도 있는) 1주차로 포함한다.
-// - 1일의 요일이 금~일이면: 그 주의 과반이 지난달에 속하므로 버리고, 이 달의 첫 월요일부터 1주차를 시작한다.
-// - 월 마지막에 걸치는 주도 동일하게: 이 달에 속하는 날이 4일 이상이면 포함(다음 달로 며칠 이어짐), 3일 이하면 통째로 버리고 다음 달의 몫으로 넘긴다.
-// 실제 월~일 기준 주차. 한 달은 항상 "정확히 4주"로 고정한다(5주차가 생기지 않도록).
-// - 1주차의 시작만 과반 기준으로 정한다: 이 달 1일의 요일이 월~목이면 1일부터(짧을 수도 있는) 1주차 시작,
-//   금~일이면 그 주는 지난달 소속이니 버리고 첫 월요일부터 1주차 시작.
-// - 그 다음은 무조건 7일씩 4주까지만 생성한다. 남는 날(월 시작 전 며칠, 월 끝 남는 며칠)은
-//   별도 주차로 잡지 않고, computeMemberMonth에서 가장 가까운 주(1주차 또는 마지막 주)로 합산된다.
-function mondayWeeksFor(y, m){
-  const total = daysInMonth(y, m);
-  const day1Dow = new Date(y, m, 1).getDay(); // 0=일요일 ... 6=토요일
-  const mondayBased = day1Dow===0 ? 7 : day1Dow; // 월=1 ... 일=7
-  const weeks = [];
-  let start;
-  if(mondayBased<=4){
-    // 월/화/수/목 시작: 과반이 이 달 소속 → 1일부터 시작하는 (짧은) 1주차
-    const daysUntilSunday = 7 - mondayBased;
-    const firstEnd = 1 + daysUntilSunday;
-    weeks.push({week:1, start:1, end:firstEnd});
-    start = firstEnd + 1;
-  } else {
-    // 금/토/일 시작: 과반이 지난달 소속 → 첫 월요일까지 버림
-    let firstMonday = null;
-    for(let d=1; d<=7 && d<=total; d++){
-      if(new Date(y, m, d).getDay()===1){ firstMonday = d; break; }
-    }
-    if(firstMonday==null) return weeks;
-    start = firstMonday;
-  }
-  let weekNum = weeks.length + 1;
-  while(weekNum<=4){
-    weeks.push({week: weekNum, start, end: start+6});
-    weekNum++;
-    start += 7;
-  }
-  return weeks;
-}
+// (2026-08 정책 변경: 주 2회 운동 기준을 폐지하고 월 누적 기준(운동 8회+식단 12회)으로 통합하면서
+//  요일 기준 주차 분할 로직(구 mondayWeeksFor)은 더 이상 쓰이지 않아 제거함)
 
 // ---------- state ----------
 const state = {
@@ -702,98 +669,53 @@ function monthStatus(y, m){
 }
 
 // compute fines for one member in one month.
-// 운동: 주차가 끝난(지난) 주만 그 주의 미달분(2회 기준)을 벌금으로 확정. 진행중인 주는 미확정.
-// 식단: 주 단위 기준 없음 - 월 전체가 끝났을 때만 월 누적(12회 기준) 미달분을 벌금으로 확정.
-// 가입일(joinedAt) 이전 기간은 아예 기준 자체가 없는 걸로 보고 벌금을 매기지 않는다.
+// (2026-08 정책) 주 2회 운동 기준 폐지. 운동/식단 모두 주차 구분 없이 "월 누적" 기준으로만 판정한다:
+//   운동 월 8회(5,000원/회) + 식단 월 12회(2,000원/회) = 총 20회.
+// 그 달이 완전히 끝나야(다음 달이 되어야) 운동/식단 미달분이 벌금으로 확정된다 — 진행중인 달은 미확정("진행중").
+// 가입일(joinedAt) 이후 남은 일수 비율만큼 기준 횟수를 비례 축소하고, 합류 자체가 이 달보다 나중이면 기준 0.
+const MONTHLY_WORKOUT_MIN = 8;
+const MONTHLY_DIET_MIN = 12;
 async function computeMemberMonth(ym, member, items){
   const [y,mm] = ym.split('-').map(Number);
   const m = mm-1;
   const status = monthStatus(y, m);
   const total = daysInMonth(y, m);
-  const weekBlocks = mondayWeeksFor(y, m);
-  const weeks = weekBlocks.map(b=>({...b, workout:0, closed:false, fine:null, beforeJoin:false}));
 
   // 이 멤버가 그룹에 합류한 날짜. 없으면(과거부터 이미 활동 중이던 멤버) 처음부터 함께한 것으로 간주 — 기존 동작 유지.
   const memInfo = state.members.find(mm=>mm.name===member);
   const joinedAt = memInfo && memInfo.joinedAt ? memInfo.joinedAt : null; // 'YYYY-MM-DD'
   const joinedDate = joinedAt ? new Date(joinedAt+'T00:00:00') : null;
 
-  // 마지막 주가 다음 달로 넘어가면(end > total) 다음 달 초반 며칠 데이터를 이어서 확인
-  const needsNext = weeks.some(w=>w.end>total);
-  let nextItems = [];
-  if(needsNext){
-    const nm = m+1; const ny = nm>11 ? y+1 : y; const nmIdx = nm>11 ? 0 : nm;
-    const nextYm = ny+'-'+pad2(nmIdx+1);
-    const data = await loadMonth(nextYm);
-    nextItems = data.items;
-  }
-
   let workoutCount=0, dietCount=0;
   items.filter(it=>it.member===member).forEach(it=>{
-    const dnum = Number(it.date.split('-')[2]);
-    if(it.type==='workout'){
-      workoutCount++;
-      let wk = weeks.find(w=> dnum>=w.start && dnum<=Math.min(w.end,total));
-      if(!wk && weeks.length){
-        // 어느 주에도 속하지 않는 선행/후행 제외일 — 가장 가까운 주(첫 주 또는 마지막 주)에 합산
-        if(dnum < weeks[0].start) wk = weeks[0];
-        else if(dnum > Math.min(weeks[weeks.length-1].end, total)) wk = weeks[weeks.length-1];
-      }
-      if(wk) wk.workout++;
-    } else if(it.type==='diet' && it.valid!==false){
-      dietCount++;
-    }
-  });
-  nextItems.filter(it=>it.member===member && it.type==='workout').forEach(it=>{
-    const dnum = Number(it.date.split('-')[2]); // 다음 달 기준 일자
-    const equivDay = total + dnum; // 이번 달 연장선상의 가상 일자
-    const wk = weeks.find(w=> equivDay>=w.start && equivDay<=w.end);
-    if(wk) wk.workout++; // 다음 달 자체의 workoutCount에는 포함하지 않고, 이 주의 카운트에만 반영
+    if(it.type==='workout') workoutCount++;
+    else if(it.type==='diet' && it.valid!==false) dietCount++;
   });
 
-  let workoutFine = 0;
-  const vacation = isVacationMonth(ym);
-  weeks.forEach(wk=>{
-    // 주의 실제 종료일시(다음 달로 넘어가는 날짜도 Date 객체가 자동으로 처리)를 기준으로 마감 여부 판단
-    const weekEndDateTime = new Date(y, m, wk.end, 23, 59, 59, 999);
-    const isClosed = new Date() > weekEndDateTime;
-    wk.closed = isClosed;
-    // 이 주 전체가 합류일 이전이면 기준 자체가 없는 것으로 보고 완전히 제외 (벌금 X)
-    if(joinedDate && weekEndDateTime < joinedDate){
-      wk.beforeJoin = true;
-      wk.fine = null;
-      return;
-    }
-    if(isClosed){
-      const short = vacation ? 0 : Math.max(0, 2-wk.workout);
-      wk.fine = short*5000;
-      workoutFine += wk.fine;
-    }
-  });
-
-  // 식단 최소 기준(기본 12회). 합류한 달이면 합류일부터 남은 일수 비율로 조정하고,
-  // 합류 자체가 이 달보다 나중이면(아직 그룹에 없었음) 기준 0.
-  let dietMin = 12;
-  if(joinedDate){
+  // 합류일 비례 기준 계산 (운동/식단 공통 로직). 합류 전이면 기준 0, 월중 합류면 남은 일수 비율로 축소.
+  function proratedMin(base){
+    if(!joinedDate) return base;
     const monthStartDate = new Date(y, m, 1, 0, 0, 0, 0);
     const monthEndDate = new Date(y, m, total, 23, 59, 59, 999);
-    if(joinedDate > monthEndDate){
-      dietMin = 0;
-    } else if(joinedDate > monthStartDate){
+    if(joinedDate > monthEndDate) return 0;
+    if(joinedDate > monthStartDate){
       const availableDays = total - joinedDate.getDate() + 1;
-      dietMin = Math.max(0, Math.round(12 * availableDays / total));
+      return Math.max(0, Math.round(base * availableDays / total));
     }
+    return base;
   }
+  const minWorkout = proratedMin(MONTHLY_WORKOUT_MIN);
+  const dietMin = proratedMin(MONTHLY_DIET_MIN);
 
-  const dietClosed = status.past; // 식단은 그 달이 완전히 끝났을 때만 정산
-  let dietFine = 0;
-  if(dietClosed && !vacation){
-    const short = Math.max(0, dietMin-dietCount);
-    dietFine = short*2000;
+  const vacation = isVacationMonth(ym);
+  const monthClosed = status.past; // 운동/식단 모두 그 달이 완전히 끝나야 정산 확정
+  let workoutFine = 0, dietFine = 0;
+  if(monthClosed && !vacation){
+    workoutFine = Math.max(0, minWorkout-workoutCount)*5000;
+    dietFine = Math.max(0, dietMin-dietCount)*2000;
   }
-  const minWorkout = weeks.filter(w=>!w.beforeJoin).length*2;
   const totalFine = workoutFine + dietFine;
-  return {workoutCount, dietCount, weeks, workoutFine, dietFine, dietClosed, totalFine, vacation, minWorkout, dietMin, total, joinedAt};
+  return {workoutCount, dietCount, workoutFine, dietFine, monthClosed, totalFine, vacation, minWorkout, dietMin, total, joinedAt};
 }
 
 // ---------- image compression ----------
@@ -1142,10 +1064,10 @@ function openRuleInfo(){
     <div class="sheet">
       <h3>💡 벌금 계산 방식</h3>
       <p style="font-size:13.5px; line-height:1.6; color:var(--ink); margin:0 0 12px;">
-        운동은 그 주가 끝나야 미달(주 2회 기준, 5,000원/회) 벌금이 확정돼요. 식단은 주차 구분 없이 자유롭게 채우면 되고, 그 달이 끝나야 월 누적(12회 기준, 2,000원/회) 벌금이 확정돼요.
+        운동·식단 모두 <b>주차 구분 없이 한 달 누적</b>으로만 채우면 돼요. 기준은 운동 월 8회(미달 시 5,000원/회), 식단 월 12회(미달 시 2,000원/회) — 두 개 합쳐서 <b>총 20회</b>예요.
       </p>
       <p style="font-size:12.5px; line-height:1.6; color:var(--ink-muted); margin:0 0 12px; background:var(--bg); border-radius:9px; padding:10px 12px;">
-        📌 주차는 <b>실제 월요일~일요일</b> 기준이고, 월 경계에 걸친 주는 <b>7일 중 며칠이 그 달에 속하는지(과반)</b>로 어느 달 소속인지 정해요. 이 달 1일이 월~목요일이면 그 주는 이 달에 속해서 1일부터 (짧게) 1주차가 시작되고, 1일이 금~일요일이면 그 주는 지난달 소속이라 버리고 첫 월요일부터 1주차가 시작돼요. 월말도 마찬가지로, 남은 날이 4일 이상이면 다음 달로 며칠 이어지는 주로 포함되고, 3일 이하면 별도 주차로 안 잡혀요. 다만 이렇게 별도 주차가 안 잡히는 날(예: 8/1~2, 8/31)에 운동을 하면, 그 기록은 버려지지 않고 <b>가장 가까운 주(1주차 또는 마지막 주)</b>로 합산돼요. 그래서 한 달의 주 수(4주 또는 5주)와 운동 최소 기준(주 2회 × 주 수)은 달마다 조금씩 달라질 수 있어요.
+        📌 그 달이 완전히 끝나야(다음 달이 되어야) 미달분이 벌금으로 확정돼요. 진행 중인 달은 "진행중"으로 표시되고 아직 벌금이 매겨지지 않아요. 월중에 합류한 멤버는 합류일부터 남은 일수 비율만큼 기준 횟수(8회/12회)가 비례해서 줄어들어요.
       </p>
       <p style="font-size:12.5px; line-height:1.6; color:#8a6a1c; background:var(--gold-soft); border-radius:9px; padding:10px 12px; margin:0 0 16px;">
         🏖️ 캘린더 탭에서 특정 달을 "방학"으로 설정하면, 그 달은 운동·식단 벌금이 아예 매겨지지 않아요.
@@ -1818,11 +1740,6 @@ function renderSettlementHtml(cd, settlement){
 }
 
 // ---------- DASHBOARD TAB ----------
-function formatWeekRangeShort(wk, total){
-  const startTxt = `${wk.start}`;
-  const endTxt = wk.end<=total ? `${wk.end}일` : `다음달${wk.end-total}일`;
-  return `${startTxt}~${endTxt}`;
-}
 
 async function renderDashboard(){
   const y = state.dashMonth.getFullYear(), m = state.dashMonth.getMonth();
@@ -1915,28 +1832,16 @@ async function renderDashboard(){
     </div>` : '';
 
   const memberCards = memberStatsList.filter(({mem})=>mem.name===state.me).map(({mem, stats})=>{
-    const weeksHtml = stats.weeks.map(wk=>{
-      if(wk.beforeJoin){
-        return `<div class="week-row">
-          <div class="wk">${wk.week}주차<span class="wk-range">(${formatWeekRangeShort(wk, stats.total)})</span></div>
-          <div class="pulsebar" style="opacity:0.35;">${Array.from({length:2},()=>'<span></span>').join('')}</div>
-          <div class="wk-count mono" style="color:var(--ink-muted);">가입 전</div>
-          <span class="week-fine zero">-</span>
-        </div>`;
-      }
-      const pips = Array.from({length:2},(_,i)=>`<span class="${i<wk.workout?'on':''}"></span>`).join('');
-      const rightLabel = wk.closed
-        ? (wk.fine===0 ? `<span class="week-fine zero">-</span>` : `<span class="week-fine">₩${wk.fine.toLocaleString()}</span>`)
-        : `<span class="week-fine pending">진행중</span>`;
-      return `<div class="week-row">
-        <div class="wk">${wk.week}주차<span class="wk-range">(${formatWeekRangeShort(wk, stats.total)})</span></div>
-        <div class="pulsebar">${pips}</div>
-        <div class="wk-count mono">${wk.workout}/2</div>
-        ${rightLabel}
+    const workoutPct = Math.min(100, stats.minWorkout>0 ? Math.round(stats.workoutCount/stats.minWorkout*100) : 100);
+    const workoutRight = stats.monthClosed
+      ? (stats.workoutFine===0 ? `<span class="week-fine zero">-</span>` : `<span class="week-fine">₩${stats.workoutFine.toLocaleString()}</span>`)
+      : `<span class="week-fine pending">진행중</span>`;
+    const workoutHtml = `<div class="diet-row">
+        <div class="diet-row-top"><span>💪 운동 (월 누적, 주차 구분 없음)</span><span class="mono">${stats.workoutCount}/${stats.minWorkout}</span>${workoutRight}</div>
+        <div class="diet-bar"><div class="fill" style="background:var(--accent); width:${workoutPct}%"></div></div>
       </div>`;
-    }).join('');
     const dietPct = Math.min(100, stats.dietMin>0 ? Math.round(stats.dietCount/stats.dietMin*100) : 100);
-    const dietRight = stats.dietClosed
+    const dietRight = stats.monthClosed
       ? (stats.dietFine===0 ? `<span class="week-fine zero">-</span>` : `<span class="week-fine">₩${stats.dietFine.toLocaleString()}</span>`)
       : `<span class="week-fine pending">진행중</span>`;
     const dietHtml = `<div class="diet-row">
@@ -1954,18 +1859,14 @@ async function renderDashboard(){
           <div class="stat-box"><div class="n mono">${stats.workoutCount}</div><div class="t">운동 (최소${stats.minWorkout})</div></div>
           <div class="stat-box"><div class="n mono">${stats.dietCount}</div><div class="t">식단 (최소${stats.dietMin})</div></div>
         </div>
-        ${weeksHtml}
+        ${workoutHtml}
         ${(()=>{
           const notes = [];
           if(stats.joinedAt && stats.joinedAt.slice(0,7)===ym){
-            notes.push(`${stats.joinedAt.slice(5).replace('-','.')}에 합류해서, 그 전 기간은 벌금 기준에서 제외돼요`);
+            notes.push(`${stats.joinedAt.slice(5).replace('-','.')}에 합류해서, 그 전 기간은 벌금 기준에서 제외되고 기준 횟수도 남은 일수 비율로 줄어들어요`);
           }
-          if(stats.weeks[0] && stats.weeks[0].start>1){
-            notes.push(`1~${stats.weeks[0].start-1}일은 별도 주차로는 안 잡히고, 그날 한 운동은 1주차로 합산돼요`);
-          }
-          const lastWk = stats.weeks[stats.weeks.length-1];
-          if(lastWk && lastWk.end < stats.total){
-            notes.push(`${lastWk.end+1}~${stats.total}일은 별도 주차로는 안 잡히고, 그날 한 운동은 마지막 주(${lastWk.week}주차)로 합산돼요`);
+          if(!stats.monthClosed){
+            notes.push(`이번 달은 아직 진행 중이라 벌금은 월말에 확정돼요`);
           }
           return notes.length ? `<div class="week-note"><div class="week-note-title">📌 이번달 체크사항</div>${notes.map(n=>`<div class="week-note-item">· ${n}</div>`).join('')}</div>` : '';
         })()}
