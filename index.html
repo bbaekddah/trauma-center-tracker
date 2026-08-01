@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>중증외상센터 운영일지</title>
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
 <style>
@@ -24,8 +24,10 @@
     --radius:14px;
   }
   *{box-sizing:border-box;}
+  html{overflow-x:hidden; width:100%;}
   body{
     margin:0;
+    overflow-x:hidden;
     background:var(--bg);
     color:var(--ink);
     font-family:'Pretendard', -apple-system, sans-serif;
@@ -34,6 +36,7 @@
   .mono{font-family:'Pretendard', sans-serif; font-variant-numeric:tabular-nums; font-feature-settings:'tnum';}
   #app{
     max-width:520px;
+    width:100%;
     margin:0 auto;
     min-height:100vh;
     min-height:100dvh; /* 모바일 사파리 등에서 주소창 표시/숨김에 따라 실제 보이는 높이에 맞춤 */
@@ -41,6 +44,7 @@
     display:flex;
     flex-direction:column;
     position:relative;
+    overflow-x:hidden;
     box-shadow:0 0 40px rgba(0,0,0,0.04);
   }
 
@@ -147,7 +151,7 @@
   .month-nav{display:flex; align-items:center; justify-content:space-between; padding:2px 18px 10px;}
   .month-nav .m-title{font-size:16px; font-weight:800;}
   .month-nav button{background:var(--surface-alt); border:none; width:30px; height:30px; border-radius:8px; font-size:15px; cursor:pointer; color:var(--ink);}
-  .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:5px; padding:0 18px;}
+  .cal-grid{display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:5px; padding:0 18px;}
   .cal-dow{text-align:center; font-size:11px; color:var(--ink-muted); font-weight:700; padding-bottom:4px;}
   .cal-cell{
     aspect-ratio:1; border-radius:9px; background:var(--surface-alt);
