@@ -130,6 +130,8 @@
     border-radius:var(--radius); padding:10px; margin:0 18px 10px;
   }
   .checkin-card img{width:56px;height:56px;border-radius:10px;object-fit:cover; cursor:pointer; flex-shrink:0; background:var(--surface-alt);}
+  .checkin-imgs{display:flex; flex-direction:column; gap:4px; flex-shrink:0;}
+  .checkin-imgs img{border-radius:8px;}
   .checkin-meta{flex:1; min-width:0;}
   .checkin-meta .row1{display:flex; align-items:center; gap:6px; font-size:13.5px; font-weight:700;}
   .mini-icon{font-size:14px;}
@@ -257,6 +259,8 @@
   .photo-drop{
     border:1.5px dashed var(--line); border-radius:12px; padding:16px; text-align:center; cursor:pointer; color:var(--ink-muted); font-size:13px; position:relative; overflow:hidden;
   }
+  .photo-drop-row{display:flex; gap:8px;}
+  .photo-slot{flex:1; min-width:0;}
   .photo-drop img{width:100%; border-radius:8px; display:block;}
   .warn-box{background:var(--alert-soft); color:var(--alert); font-size:12px; padding:8px 10px; border-radius:9px; margin-bottom:12px;}
   .sheet-actions{display:flex; gap:8px; margin-top:6px;}
@@ -318,7 +322,9 @@
   .overdue-row{display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; padding:5px 0; border-top:1px dashed rgba(225,75,63,0.3);}
   .overdue-row:first-of-type{border-top:none;}
   .photo-full{position:fixed; inset:0; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; z-index:60;}
+  .photo-full-imgs{display:flex; flex-direction:column; gap:10px; align-items:center; max-height:90vh; overflow:auto; padding:16px;}
   .photo-full img{max-width:92%; max-height:80vh; border-radius:10px;}
+  .photo-full-imgs img{max-width:88vw; max-height:44vh;}
   .loading{display:flex; align-items:center; justify-content:center; height:60vh; color:var(--ink-muted); font-size:13px;}
 </style>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js" onerror="window.__ctFirebaseScriptError=true"></script>
@@ -622,9 +628,14 @@ async function saveMonth(ym){
   for(let i=1; i<SHRINK_LEVELS.length; i++){
     const level = SHRINK_LEVELS[i];
     for(const it of data.items){
-      if(!it.thumb) continue;
-      try{ it.thumb = await shrinkDataUrl(it.thumb, level.maxDim, level.quality); }
-      catch(e){ /* leave this item's thumb as-is if it can't be re-encoded */ }
+      if(it.thumbs && it.thumbs.length){
+        try{
+          it.thumbs = await Promise.all(it.thumbs.map(t=>shrinkDataUrl(t, level.maxDim, level.quality).catch(()=>t)));
+        }catch(e){ /* leave this item's thumbs as-is if they can't be re-encoded */ }
+      } else if(it.thumb){
+        try{ it.thumb = await shrinkDataUrl(it.thumb, level.maxDim, level.quality); }
+        catch(e){ /* leave this item's thumb as-is if it can't be re-encoded */ }
+      }
     }
     res = await setJSON('checkin-index:'+ym, data, true);
     if(res) return true;
@@ -1235,8 +1246,13 @@ function checkinCardHtml(it, compact){
   const chipClass = it.type==='workout' ? 'chip-workout' : (it.valid===false ? 'chip-invalid' : 'chip-diet');
   const chipLabel = it.type==='workout' ? `🏋️ 운동 ${it.duration}분` : (it.valid===false ? '🍱 식단(기한초과·미인정)' : '🍱 식단');
   const editable = isCheckinEditable(it);
+  // thumbs(신규, 배열)를 우선 쓰고, 예전 기록의 단일 thumb 필드도 그대로 보여준다.
+  const thumbs = it.thumbs || (it.thumb ? [it.thumb] : []);
+  const imgHtml = thumbs.length>1
+    ? `<div class="checkin-imgs">${thumbs.map(t=>`<img src="${t}" data-full="${it.id}" style="width:40px;height:40px;">`).join('')}</div>`
+    : `<img src="${thumbs[0]||''}" data-full="${it.id}">`;
   return `<div class="checkin-card"${compact ? ' style="margin:0 0 10px;"' : ''} data-id="${it.id}">
-    <img src="${it.thumb||''}" data-full="${it.id}">
+    ${imgHtml}
     <div class="checkin-meta">
       <div class="row1"><span class="mini-icon">${iconFor(it.member)}</span>${esc(displayName(it.member))} <span class="type-chip ${chipClass}">${chipLabel}</span></div>
       <div class="row2">${it.time || ''}${it.note ? ' · '+esc(it.note) : ''}</div>
@@ -1308,10 +1324,13 @@ async function renderFeed(){
 
 async function openPhotoFull(id){
   const full = await getJSON('checkin:'+id, true, null);
-  if(!full || !full.image) return;
+  const images = full && (full.images || (full.image ? [full.image] : []));
+  if(!images || !images.length) return;
   const overlay = document.createElement('div');
   overlay.className = 'photo-full';
-  overlay.innerHTML = `<img src="${full.image}">`;
+  overlay.innerHTML = images.length>1
+    ? `<div class="photo-full-imgs">${images.map(src=>`<img src="${src}">`).join('')}</div>`
+    : `<img src="${images[0]}">`;
   overlay.onclick = ()=>overlay.remove();
   document.body.appendChild(overlay);
 }
@@ -1324,9 +1343,13 @@ function openCheckinForm(typeArg, existingItem){
   const today = dateStr(now);
   const yest = dateStr(new Date(now.getTime()-86400000));
 
-  const dateOptions = type==='diet'
+  const dateOptions = (type==='diet' && !isEdit)
     ? (isEarlyMorning ? [[yest,'어제 식단 (새벽 마감 전)'],[today,'오늘 식단']] : [[today,'오늘 식단']])
     : null;
+  const maxPhotos = type==='workout' ? 2 : 1; // 운동은 전/후 사진 등을 위해 최대 2장까지 허용
+
+  // 수정 모드에서 기존에 저장된 썸네일들 (신규 배열 필드 thumbs 우선, 예전 단일 thumb 필드도 계속 지원)
+  const existingThumbs = isEdit ? (existingItem.thumbs || (existingItem.thumb ? [existingItem.thumb] : [])) : [];
 
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
@@ -1335,14 +1358,26 @@ function openCheckinForm(typeArg, existingItem){
       <button class="close-x" id="ci-close">✕</button>
       <h3>${isEdit ? '✏️ 체크인 수정' : (type==='workout' ? '🏋️ 운동 체크인' : '🍱 식단 체크인')}</h3>
       ${isEdit ? `<p style="font-size:12px;color:var(--ink-muted);margin-top:-8px;">${(isAdmin(state.me) && existingItem.member!==state.me) ? `관리자 권한으로 ${esc(displayName(existingItem.member))}님의 체크인을 수정하고 있어요.` : '체크인은 올린 당일에만 수정/삭제할 수 있어요.'}</p>` : ''}
-      ${type==='diet' ? `
+      ${type==='diet' ? (isEdit ? `
+        <div class="field">
+          <label>날짜</label>
+          <input type="date" id="diet-date-input" value="${existingItem.date}" max="${today}">
+        </div>
+        ${isAdmin(state.me) ? `
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:500;cursor:pointer;">
+            <input type="checkbox" id="diet-force-valid" style="width:16px;height:16px;" ${existingItem.valid!==false ? 'checked' : ''}>
+            기한 상관없이 인정 처리 (관리자 전용)
+          </label>
+        </div>` : ''}
+      ` : `
         <div class="field">
           <label>날짜</label>
           <div class="seg" id="diet-date-seg">
-            ${dateOptions.map((d)=>`<button data-v="${d[0]}" class="${(isEdit ? existingItem.date===d[0] : d[0]===dateOptions[0][0])?'on':''}">${d[1]}</button>`).join('')}
+            ${dateOptions.map((d)=>`<button data-v="${d[0]}" class="${d[0]===dateOptions[0][0]?'on':''}">${d[1]}</button>`).join('')}
           </div>
         </div>
-      ` : `
+      `) : `
         <div class="field">
           <label>운동한 날짜</label>
           <input type="date" id="wo-date" value="${isEdit ? existingItem.date : today}" max="${today}">
@@ -1354,9 +1389,9 @@ function openCheckinForm(typeArg, existingItem){
             <button data-v="manual" class="${isEdit?'on':''}">총 소요시간(분)</button>
           </div>
         </div>
-        <div id="dur-range" class="field" style="display:${isEdit?'none':'flex'};gap:8px;">
-          <div style="flex:1;"><label>시작</label><input type="time" id="wo-start"></div>
-          <div style="flex:1;"><label>종료</label><input type="time" id="wo-end"></div>
+        <div id="dur-range" style="display:${isEdit?'none':'block'};">
+          <div class="field"><label>시작</label><input type="time" id="wo-start"></div>
+          <div class="field"><label>종료</label><input type="time" id="wo-end"></div>
         </div>
         <div id="dur-manual" class="field" style="display:${isEdit?'block':'none'};">
           <label>소요시간(분)</label>
@@ -1364,9 +1399,15 @@ function openCheckinForm(typeArg, existingItem){
         </div>
       `}
       <div class="field">
-        <label>인증샷 ${type==='workout' ? '(운동 시간이 보이는 사진)' : '(식단 공유앱 화면)'}</label>
-        <div class="photo-drop" id="photo-drop">${isEdit && existingItem.thumb ? `<img src="${existingItem.thumb}">` : '📷 눌러서 사진 선택'}</div>
-        <input type="file" id="photo-input" accept="image/*" style="display:none;">
+        <label>인증샷 ${type==='workout' ? '(운동 시간이 보이는 사진, 최대 2장 · 전/후 등)' : '(식단 공유앱 화면)'}</label>
+        <div class="photo-drop-row">
+          ${Array.from({length:maxPhotos}, (_,i)=>`
+            <div class="photo-slot">
+              <div class="photo-drop" id="photo-drop-${i}">${existingThumbs[i] ? `<img src="${existingThumbs[i]}">` : (i===0 ? '📷 눌러서 사진 선택' : '➕ 추가 사진 (선택)')}</div>
+              <input type="file" id="photo-input-${i}" accept="image/*" style="display:none;">
+            </div>
+          `).join('')}
+        </div>
       </div>
       <div class="field">
         <label>메모 (선택)</label>
@@ -1395,43 +1436,51 @@ function openCheckinForm(typeArg, existingItem){
 
   let selectedDate = isEdit ? existingItem.date : (type==='diet' ? dateOptions[0][0] : today);
   let durMode = isEdit ? 'manual' : 'range';
-  let photoData = isEdit ? (existingItem.thumb || null) : null;
-  let photoFile = null; // raw File for the currently selected photo, kept so we can re-compress harder if saving fails
+  let photoDataArr = Array.from({length:maxPhotos}, (_,i)=> existingThumbs[i] || null);
+  let photoFileArr = Array.from({length:maxPhotos}, ()=> null); // 슬롯별 raw File (저장 실패 시 다시 세게 압축하기 위해 보관)
 
   if(type==='diet'){
-    overlay.querySelectorAll('#diet-date-seg button').forEach(b=>{
-      b.onclick = ()=>{
-        overlay.querySelectorAll('#diet-date-seg button').forEach(x=>x.classList.remove('on'));
-        b.classList.add('on'); selectedDate = b.dataset.v;
-      };
-    });
+    if(isEdit){
+      const dietDateInput = overlay.querySelector('#diet-date-input');
+      if(dietDateInput) dietDateInput.onchange = ()=>{ selectedDate = dietDateInput.value || existingItem.date; };
+    } else {
+      overlay.querySelectorAll('#diet-date-seg button').forEach(b=>{
+        b.onclick = ()=>{
+          overlay.querySelectorAll('#diet-date-seg button').forEach(x=>x.classList.remove('on'));
+          b.classList.add('on'); selectedDate = b.dataset.v;
+        };
+      });
+    }
   } else {
     overlay.querySelectorAll('#dur-mode-seg button').forEach(b=>{
       b.onclick = ()=>{
         overlay.querySelectorAll('#dur-mode-seg button').forEach(x=>x.classList.remove('on'));
         b.classList.add('on'); durMode = b.dataset.v;
-        overlay.querySelector('#dur-range').style.display = durMode==='range' ? 'flex' : 'none';
+        overlay.querySelector('#dur-range').style.display = durMode==='range' ? 'block' : 'none';
         overlay.querySelector('#dur-manual').style.display = durMode==='manual' ? 'block' : 'none';
       };
     });
   }
 
-  const photoDrop = overlay.querySelector('#photo-drop');
-  const photoInput = overlay.querySelector('#photo-input');
-  photoDrop.onclick = ()=>photoInput.click();
-  photoInput.onchange = async ()=>{
-    const f = photoInput.files[0];
-    if(!f) return;
-    photoFile = f;
-    photoDrop.innerHTML = '압축 중…';
-    photoData = await compressImage(f);
-    photoDrop.innerHTML = `<img src="${photoData}">`;
-  };
+  for(let pi=0; pi<maxPhotos; pi++){
+    const photoDrop = overlay.querySelector('#photo-drop-'+pi);
+    const photoInput = overlay.querySelector('#photo-input-'+pi);
+    if(!photoDrop || !photoInput) continue;
+    photoDrop.onclick = ()=>photoInput.click();
+    photoInput.onchange = async ()=>{
+      const f = photoInput.files[0];
+      if(!f) return;
+      photoFileArr[pi] = f;
+      photoDrop.innerHTML = '압축 중…';
+      photoDataArr[pi] = await compressImage(f);
+      photoDrop.innerHTML = `<img src="${photoDataArr[pi]}">`;
+    };
+  }
 
   overlay.querySelector('#ci-submit').onclick = async ()=>{
     const warnBox = overlay.querySelector('#ci-warning');
     warnBox.innerHTML = '';
-    if(!photoData){ warnBox.innerHTML = '<div class="warn-box">인증샷을 첨부해주세요.</div>'; return; }
+    if(!photoDataArr[0]){ warnBox.innerHTML = '<div class="warn-box">인증샷을 첨부해주세요.</div>'; return; }
 
     let duration = null;
     if(type==='workout'){
@@ -1454,9 +1503,19 @@ function openCheckinForm(typeArg, existingItem){
 
     let valid = true;
     if(type==='diet'){
-      const cutoff = new Date(selectedDate+'T00:00:00');
-      cutoff.setDate(cutoff.getDate()+1); cutoff.setHours(6,0,0,0);
-      valid = new Date() <= cutoff;
+      const forceValidEl = overlay.querySelector('#diet-force-valid');
+      if(forceValidEl){
+        // 관리자가 명시적으로 체크/해제한 값을 그대로 존중 (기한 계산 자체를 건너뜀)
+        valid = forceValidEl.checked;
+      } else if(isEdit && selectedDate===existingItem.date){
+        // 날짜를 바꾸지 않은 단순 수정(사진 교체 등)이면, "지금 시각" 기준으로 다시 기한을 따지지 않고
+        // 원래 있던 인정 여부를 그대로 유지한다. (안 그러면 옛날 기록을 수정할 때마다 기한초과로 뒤집혀버림)
+        valid = existingItem.valid!==false;
+      } else {
+        const cutoff = new Date(selectedDate+'T00:00:00');
+        cutoff.setDate(cutoff.getDate()+1); cutoff.setHours(6,0,0,0);
+        valid = new Date() <= cutoff;
+      }
     }
 
     const id = isEdit ? existingItem.id : ('ck_'+Date.now()+'_'+Math.random().toString(36).slice(2,7));
@@ -1469,22 +1528,27 @@ function openCheckinForm(typeArg, existingItem){
     submitBtn.disabled = true;
     submitBtn.textContent = '저장 중…';
 
+    // 실제 채워진 슬롯만 (사진1만 넣고 사진2는 비워둔 경우가 많으므로) 인덱스를 정리해서 다룬다.
+    const activeIdx = [];
+    for(let pi=0; pi<maxPhotos; pi++) if(photoDataArr[pi]) activeIdx.push(pi);
+
     // Try saving the check-in; if it fails (often because the image payload is too
     // large, but also covers plain transient server errors), automatically shrink the
-    // photo further and retry before ever bothering the user with an error.
-    let imageToSave = photoData;
+    // photo(s) further and retry before ever bothering the user with an error.
+    let imagesToSave = activeIdx.map(pi=>photoDataArr[pi]);
     let full = null;
     let saved = false;
     for(let i=0; i<SHRINK_LEVELS.length; i++){
       if(i>0){
-        try{ imageToSave = await shrinkImageFurther(SHRINK_LEVELS[i], photoFile, imageToSave); }
-        catch(e){ break; } // can't shrink further, stop trying
+        try{
+          imagesToSave = await Promise.all(imagesToSave.map((img,k)=>shrinkImageFurther(SHRINK_LEVELS[i], photoFileArr[activeIdx[k]], img)));
+        }catch(e){ break; } // can't shrink further, stop trying
       }
       full = {
         id, member: ownerName, type, date: selectedDate,
         time: isEdit ? existingItem.time : nowD.toTimeString().slice(0,5),
         duration: type==='workout' ? duration : null,
-        valid, note, image: imageToSave,
+        valid, note, images: imagesToSave,
         createdAt: isEdit ? existingItem.createdAt : nowD.toISOString()
       };
       const res = await setJSON('checkin:'+id, full, true);
@@ -1498,15 +1562,15 @@ function openCheckinForm(typeArg, existingItem){
     }
 
     // 캘린더/피드 목록에는 56px 정도의 아주 작은 썸네일만 있으면 되므로,
-    // 원본(full) 이미지를 그대로 재사용하지 않고 훨씬 작은 별도 썸네일을 새로 생성해서 저장한다.
+    // 원본(full) 이미지를 그대로 재사용하지 않고 훨씬 작은 별도 썸네일들을 새로 생성해서 저장한다.
     // (그대로 재사용하면 같은 이미지가 두 군데에 중복 저장돼서 용량/다운로드가 2배가 됨)
-    let smallThumb = imageToSave;
-    try{ smallThumb = await shrinkDataUrl(imageToSave, 140, 0.5); }
-    catch(e){ /* 실패하면 원본을 그대로 사용 (기존 동작 유지) */ }
+    let smallThumbs;
+    try{ smallThumbs = await Promise.all(imagesToSave.map(img=>shrinkDataUrl(img, 140, 0.5))); }
+    catch(e){ smallThumbs = imagesToSave; /* 실패하면 원본을 그대로 사용 (기존 동작 유지) */ }
 
     const monthItem = {
       id, member: ownerName, type, date: selectedDate, time: full.time,
-      duration: full.duration, valid, note, thumb: smallThumb, createdAt: full.createdAt
+      duration: full.duration, valid, note, thumbs: smallThumbs, createdAt: full.createdAt
     };
     const newYm = selectedDate.slice(0,7);
     if(isEdit && existingItem.date.slice(0,7) !== newYm){
