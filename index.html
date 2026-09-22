@@ -426,7 +426,7 @@ const FIREBASE_NOT_CONFIGURED = firebaseConfig.apiKey === "YOUR_API_KEY" || fire
       try{
         await ready();
         const encPrefix = encodeKey(prefix);
-        const snap = await db.ref(ROOT).orderByKey().startAt(encPrefix).endAt(encPrefix + '').once('value');
+        const snap = await db.ref(ROOT).orderByKey().startAt(encPrefix).endAt(encPrefix + '\uf8ff').once('value');
         const keys = [];
         snap.forEach(child=>{ if(child.key !== '_ping') keys.push(child.key); });
         return {keys};
